@@ -1,4 +1,11 @@
-install.packages("tidyverse")
+# NYC Borough Vehicle Collisions
+#
+# USAGE
+#
+#     $ r -f analyses/nyc-vehicle-collisions.R
+#
+
+install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 
 library(tidyverse)
 
