@@ -4,3 +4,6 @@ tmp*/
 
 !data/.gitkeep
 data/*.csv
+
+.direnv/
+.envrc
