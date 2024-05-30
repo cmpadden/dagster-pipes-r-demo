@@ -1,0 +1,6 @@
+**/__pycache__/**
+*.egg-info/
+tmp*/
+
+!data/.gitkeep
+data/*.csv
