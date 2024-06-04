@@ -15,6 +15,7 @@
 #     install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 #
 
+library(R6)
 library(base64enc)
 library(jsonlite)
 library(tidyverse)
@@ -72,61 +73,146 @@ open_dagster_pipes <- function() {
     ))
 }
 
-params <- open_dagster_pipes()
-context <- load_context(params$context_params)
+# partial translation of
+# https://github.com/dagster-io/dagster/blob/258d9ca0db7fcc16d167e55fee35b3cf3f125b2e/python_modules/dagster-pipes/dagster_pipes/__init__.py#L60
 
-sprintf("Dagster run id: %s", context$run_id)
-sprintf("Dagster job name: %s", context$job_name)
+# # partial translation of
+# # https://github.com/dagster-io/dagster/blob/258d9ca0db7fcc16d167e55fee35b3cf3f125b2e/python_modules/dagster-pipes/dagster_pipes/__init__.py#L670
+# PipesFileMessageWriterChannel <- R6Class("PipesFileMessageWriterChannel",
+#   public = list(
+#     path =  NULL,
+#     initialize = function(path) {
+#       self$path <- path
+#     },
+#     log = function(message) {
+#       cat(message, file = self$path, append = TRUE, sep = "\n")
+#     }
+#   )
+# )
 
-####################################################################################################
-#                                             Pipeline                                             #
-####################################################################################################
+# todo handle open / close
+#
+# class _PipesLogger(logging.Logger):
+#     def __init__(self, context: "PipesContext") -> None:
+#         super().__init__(name="dagster-pipes")
+#         self.addHandler(_PipesLoggerHandler(context))
+#
+#
+# class _PipesLoggerHandler(logging.Handler):
+#     def __init__(self, context: "PipesContext") -> None:
+#         super().__init__()
+#         self._context = context
+#
+#     def emit(self, record: logging.LogRecord) -> None:
+#         self._context._write_message(  # noqa: SLF001
+#             "log", {"message": record.getMessage(), "level": record.levelname}
+#         )
+#
 
 
-vehicle_collisions_url <- ifelse(
-    exists("context$extras$vehicle_collisions_url"),
-    context$extras$vehicle_collisions_url,
-    "https://data.cityofnewyork.us/api/views/h9gi-nx95/rows.csv"
-)
+# R does not support __ prefixes
+# PIPES_PROTOCOL_VERSION_FIELD <- "__dagster_pipes_version"
+# PIPES_PROTOCOL_VERSION <- "0.1"
 
-vehicle_collisions_cache_path <- ifelse(
-    exists("context$extras$vehicle_collisions_cache_path"),
-    context$extras$vehicle_collisions_cache_path,
-    "data/nyc-collisions.csv"
-)
-
-plot_output_path <- ifelse(
-    exists("context$extras$plot_output_path"),
-    context$extras$plot_output_path,
-    "nyc-vehicle-collisions-by-borough.png"
-)
-
-sprintf("vehicle collision source data url: %s", vehicle_collisions_url)
-sprintf("vehicle collision cached data path: %s", vehicle_collisions_cache_path)
-sprintf("plot output path: %s", plot_output_path)
-
-if (file.exists(vehicle_collisions_cache_path)) {
-    df <- read_csv(vehicle_collisions_cache_path)
-} else {
-    df <- read_csv(vehicle_collisions_url)
-    dir.create("data", showWarnings = FALSE, recursive = TRUE)
-    write.csv(df, file = VEHICLE_COLLISIONS_CACHE_PATH, row.names = TRUE)
+# translation of
+# https://github.com/dagster-io/dagster/blob/258d9ca0db7fcc16d167e55fee35b3cf3f125b2e/python_modules/dagster-pipes/dagster_pipes/__init__.py#L60
+make_message <- function(method, params) {
+    return(toJSON(
+        list(
+            method = method,
+            params = params
+        ),
+        auto_unbox = TRUE
+    ))
 }
 
-colnames(df) <- gsub(" ", "_", colnames(df))
+# translation of
+# https://github.com/dagster-io/dagster/blob/258d9ca0db7fcc16d167e55fee35b3cf3f125b2e/python_modules/dagster-pipes/dagster_pipes/__init__.py#L931
+write_message <- function(file, message) {
+    msg <- message
+    cat(msg, file = file, append = TRUE, sep = "\n")
+}
 
-df_collision_counts <- df %>%
-    filter(!is.na(BOROUGH)) %>%
-    mutate(CRASH_YEAR = format(strptime(CRASH_DATE, "%m/%d/%Y"), "%Y")) %>%
-    group_by(BOROUGH, CRASH_YEAR) %>%
-    count(name = "CRASH_COUNT")
 
-g <- ggplot(df_collision_counts, aes(x = CRASH_YEAR, y = CRASH_COUNT, group = BOROUGH)) +
-    ggtitle("NYC Vehicle Collisions by Borough") +
-    xlab("Year") +
-    ylab("Number of Collisions") +
-    geom_line() +
-    facet_wrap(~BOROUGH, ncol = 1) +
-    stat_smooth(method = "lm", fullrange = TRUE, color = "purple", linetype = "dashed", size = 0.4)
+params <- open_dagster_pipes()
 
-ggsave("nyc-vehicle-collisions-by-borough.png", plot = g, dpi = 600)
+context <- load_context(params$context_params)
+
+temp_dest <- params$messages_params$path
+
+write_message(temp_dest, make_message("opened", list()))
+
+write_message(temp_dest, make_message("log", list(message = "Hello, World", level = "INFO")))
+
+write_message(temp_dest, make_message("closed", list()))
+
+file.copy(temp_dest, "/tmp/example.json")
+
+
+# why is the resulting JSON file using a list for "method" eg. ["open"] instead of just a string?
+
+# > print(file_contents)
+# [1] "{\"method\":[\"open\"],\"params\":[]}"
+# [2] "{\"method\":[\"log\"],\"params\":{\"hello\":[\"world\"]}}"
+# [3] "{\"method\":[\"close\"],\"params\":[]}"
+
+
+# logger <- PipesFileMessageWriterChannel$new(params$messages_params$path)
+# logger$log(sprintf("Dagster run id: %s", context$run_id))
+# logger$log(sprintf("Dagster job name: %s", context$job_name))
+
+file_contents <- readLines(params$messages_params$path, warn = FALSE, encoding = "UTF-8")
+print(file_contents)
+
+# ####################################################################################################
+# #                                             Pipeline                                             #
+# ####################################################################################################
+#
+#
+# vehicle_collisions_url <- ifelse(
+#     exists("context$extras$vehicle_collisions_url"),
+#     context$extras$vehicle_collisions_url,
+#     "https://data.cityofnewyork.us/api/views/h9gi-nx95/rows.csv"
+# )
+#
+# vehicle_collisions_cache_path <- ifelse(
+#     exists("context$extras$vehicle_collisions_cache_path"),
+#     context$extras$vehicle_collisions_cache_path,
+#     "data/nyc-collisions.csv"
+# )
+#
+# plot_output_path <- ifelse(
+#     exists("context$extras$plot_output_path"),
+#     context$extras$plot_output_path,
+#     "nyc-vehicle-collisions-by-borough.png"
+# )
+#
+# sprintf("vehicle collision source data url: %s", vehicle_collisions_url)
+# sprintf("vehicle collision cached data path: %s", vehicle_collisions_cache_path)
+# sprintf("plot output path: %s", plot_output_path)
+
+# if (file.exists(vehicle_collisions_cache_path)) {
+#     df <- read_csv(vehicle_collisions_cache_path)
+# } else {
+#     df <- read_csv(vehicle_collisions_url)
+#     dir.create("data", showWarnings = FALSE, recursive = TRUE)
+#     write.csv(df, file = VEHICLE_COLLISIONS_CACHE_PATH, row.names = TRUE)
+# }
+#
+# colnames(df) <- gsub(" ", "_", colnames(df))
+#
+# df_collision_counts <- df %>%
+#     filter(!is.na(BOROUGH)) %>%
+#     mutate(CRASH_YEAR = format(strptime(CRASH_DATE, "%m/%d/%Y"), "%Y")) %>%
+#     group_by(BOROUGH, CRASH_YEAR) %>%
+#     count(name = "CRASH_COUNT")
+#
+# g <- ggplot(df_collision_counts, aes(x = CRASH_YEAR, y = CRASH_COUNT, group = BOROUGH)) +
+#     ggtitle("NYC Vehicle Collisions by Borough") +
+#     xlab("Year") +
+#     ylab("Number of Collisions") +
+#     geom_line() +
+#     facet_wrap(~BOROUGH, ncol = 1) +
+#     stat_smooth(method = "lm", fullrange = TRUE, color = "purple", linetype = "dashed", size = 0.4)
+#
+# ggsave("nyc-vehicle-collisions-by-borough.png", plot = g, dpi = 600)
